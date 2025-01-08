@@ -20,6 +20,7 @@ How to configure?
 - Go to https://my.telegram.org/auth for discover your API_ID and API_HASH
 
 - Fill this configuration variables in top of the example  .env file. rename to .env
+- pip install -r requirements.txt
 
 # Variables comunes a ambos scripts
 - API_ID=''  # Reemplaza con tu API ID de Telegram
