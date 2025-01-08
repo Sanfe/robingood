@@ -20,6 +20,7 @@ What make the difference?
 How to configure?
 
 - Go to https://my.telegram.org/auth for discover your API_ID and API_HASH
+- for channel id, you could use https://t.me/getInfoByIdBot ot come to telegram web and take the -10000000 and the end in the URL.
 - Fill this configuration variables in top of the example  .env file. rename to .env
 - pip install -r requirements.txt
 
@@ -32,13 +33,13 @@ How to configure?
 - WAIT_TIME=60  # in seconds
 
 # vars for robingood.py
-- MOVIES_DOWNLOAD_CHANNEL_ID=''
-- SERIES_DOWNLOAD_CHANNEL_ID='-'
-- CONTROL_DOWNLOAD_CHANNEL_ID=''
-- MOVIES_DOWNLOAD_TEMP_FOLDER=''
-- SERIES_DOWNLOAD_TEMP_FOLDER=''
-- MOVIES_DOWNLOAD_FOLDER=''
-- SERIES_DOWNLOAD_FOLDER=''
+- MOVIES_DOWNLOAD_CHANNEL_ID=' '
+- SERIES_DOWNLOAD_CHANNEL_ID=' '
+- CONTROL_DOWNLOAD_CHANNEL_ID=' '
+- MOVIES_DOWNLOAD_TEMP_FOLDER=' '
+- SERIES_DOWNLOAD_TEMP_FOLDER=' '
+- MOVIES_DOWNLOAD_FOLDER=' '
+- SERIES_DOWNLOAD_FOLDER=' '
  
 - USE_TMM=True  # Use TinyMediaManager (True/False)
 - STATE_FILE=download_state.json
