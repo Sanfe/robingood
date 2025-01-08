@@ -1,7 +1,8 @@
 import os
+import re
 import asyncio
 from telethon import TelegramClient, events
-from telethon.errors import SessionPasswordNeededError, MessageIdInvalidError, ChatWriteForbiddenError
+from telethon.errors import SessionPasswordNeededError, MessageIdInvalidError, ChatWriteForbiddenError, FloodWaitError
 from aiohttp import web
 import sqlite3
 import logging
@@ -21,7 +22,6 @@ API_ID = os.getenv('API_ID')
 API_HASH = os.getenv('API_HASH')
 PHONE_NUMBER = os.getenv('PHONE_NUMBER')
 PROXY_PORT = int(os.getenv('PROXY_PORT', 8080))
-WAIT_TIME = int(os.getenv('WAIT_TIME', 120))
 CHANNELS = {
     'Movies': {
         'id': int(os.getenv('MOVIES_CHANNEL_ID')),
@@ -67,13 +67,48 @@ async def handle_proxy_request(request):
         if not message or not message.file:
             return web.Response(status=404, text="Archivo no encontrado en el canal.")
 
-        response = web.StreamResponse()
-        response.content_type = message.file.mime_type or 'application/octet-stream'
-        response.headers['Content-Disposition'] = f'inline; filename="{message.file.name or file_id}"'
+        # Obtener el tamaño del archivo
+        file_size = message.file.size
+
+        # Determinar el rango solicitado
+        range_header = request.headers.get('Range', None)
+        if range_header:
+            range_match = re.match(r'bytes=(\d+)-(\d+)?', range_header)
+            if range_match:
+                start = int(range_match.group(1))
+                end = int(range_match.group(2)) if range_match.group(2) else file_size - 1
+            else:
+                return web.Response(status=400, text="Invalid Range header")
+        else:
+            start = 0
+            end = file_size - 1
+
+        # Asegurarse de que los límites estén dentro del tamaño del archivo
+        start = max(0, min(start, file_size - 1))
+        end = max(0, min(end, file_size - 1))
+
+        # Configurar la respuesta con el rango adecuado
+        response = web.StreamResponse(
+            status=206 if range_header else 200,
+            headers={
+                'Content-Type': message.file.mime_type or 'application/octet-stream',
+                'Content-Range': f'bytes {start}-{end}/{file_size}',
+                'Content-Length': str(end - start + 1),
+                'Accept-Ranges': 'bytes',
+            }
+        )
         await response.prepare(request)
 
-        async for chunk in client.iter_download(message.media):
+        # Descargar el archivo en partes y enviarlas
+        byte_count = 0
+        async for chunk in client.iter_download(message.media, offset=start):
+            chunk_length = len(chunk)
+            if byte_count + chunk_length > end - start + 1:
+                chunk = chunk[:end - start + 1 - byte_count]
             await response.write(chunk)
+            byte_count += chunk_length
+            if byte_count >= end - start + 1:
+                break
 
         await response.write_eof()
         logger.info(f"Archivo {file_id} del canal {channel} transmitido correctamente.")
@@ -99,6 +134,16 @@ def capitalize_title(title):
     Capitalizes the first letter of each word in the title.
     """
     return ' '.join(word.capitalize() for word in title.split())
+
+def create_tvshow_nfo(tvshow_folder, title):
+    """
+    Creates a tvshow.nfo file in the specified folder with the given title.
+    """
+    nfo_path = tvshow_folder / 'tvshow.nfo'
+    if not nfo_path.exists():
+        with nfo_path.open('w') as nfo_file:
+            nfo_file.write(f"<tvshow>\n  <title>{title}</title>\n</tvshow>\n")
+        logger.info(f"Archivo tvshow.nfo creado: {nfo_path}")
 
 async def wait_for_response(client, chat_id, timeout=60):
     loop = asyncio.get_event_loop()
@@ -140,19 +185,6 @@ async def process_channel(channel_name, channel_info):
     folder_path = Path(channel_info['folder'])
     folder_path.mkdir(parents=True, exist_ok=True)
 
-    cursor.execute("SELECT file_id, file_path FROM files WHERE channel=?", (channel_name,))
-    processed_files = cursor.fetchall()
-
-    for file_id, file_path in processed_files:
-        try:
-            await client.get_messages(channel, ids=int(file_id))
-        except MessageIdInvalidError:
-            cursor.execute("DELETE FROM files WHERE file_id=? AND channel=?", (file_id, channel_name))
-            conn.commit()
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                logger.info(f"Archivo {file_path} eliminado por no existir en el canal.")
-
     async for message in client.iter_messages(channel):
         if message.file and message.file.mime_type.startswith('video/'):
             file_id = str(message.id)
@@ -189,11 +221,39 @@ async def process_channel(channel_name, channel_info):
 
             logger.info(f"Archivo STRM creado: {strm_path}")
 
+            # Crear el archivo tvshow.nfo si no existe
+            create_tvshow_nfo(folder_path / title, title)
+
+async def verify_files(channel_name, channel_info):
+    channel = await client.get_entity(channel_info['id'])
+
+    cursor.execute("SELECT file_id, file_path FROM files WHERE channel=?", (channel_name,))
+    processed_files = cursor.fetchall()
+
+    for file_id, file_path in processed_files:
+        try:
+            await client.get_messages(channel, ids=int(file_id))
+        except MessageIdInvalidError:
+            cursor.execute("DELETE FROM files WHERE file_id=? AND channel=?", (file_id, channel_name))
+            conn.commit()
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"Archivo {file_path} eliminado por no existir en el canal.")
+
+async def handle_verify_request(request):
+    channel = request.match_info['channel']
+    if channel in CHANNELS:
+        await verify_files(channel, CHANNELS[channel])
+        return web.Response(status=200, text="Verificación completada.")
+    else:
+        return web.Response(status=404, text="Canal no encontrado.")
+
 async def main():
     await authenticate()
 
     app = web.Application()
     app.router.add_get('/{channel}/{file_id}', handle_proxy_request)
+    app.router.add_get('/verify/{channel}', handle_verify_request)
 
     runner = web.AppRunner(app)
     await runner.setup()
@@ -202,10 +262,13 @@ async def main():
 
     logger.info("Servidor HTTP de streaming iniciado.")
 
+    # Procesar canales en paralelo
+    tasks = [process_channel(channel_name, channel_info) for channel_name, channel_info in CHANNELS.items()]
+    await asyncio.gather(*tasks)
+
+    # Mantener el servidor en ejecución
     while True:
-        for channel_name, channel_info in CHANNELS.items():
-            await process_channel(channel_name, channel_info)
-        await asyncio.sleep(WAIT_TIME)
+        await asyncio.sleep(3600)
 
 if __name__ == '__main__':
     asyncio.run(main())
