@@ -6,8 +6,13 @@ What make the difference?
 
 - Use Telethon to monitor 2 channels (Movies and Series) each 1 min
 - If you download 7z , zip or rar in a joined message, it extract for you
-- for let your gallery ready to use in Kodi or other media center, it execute tiny Media Manager (TMM), You have to configure TMM in gui first, adding the paths and your setup. 
+- for let your gallery ready to use in Kodi or other media center, it execute tiny Media Manager (TMM), You have to configure TMM in gui first, adding the paths and your setup.
 
+# Robingood_streaming
+
+- Suitable for files max 4 gb allowed by telegram, it allows to streaming video message or video files in one part (no seeking avaliable yet, only play)
+- It creates a web internal proxy in localhost, linked with a sqlite database that monitor the path of files.
+- If you delete the file in the chat, it would be delete in the system.
 
 
 How to configure?
