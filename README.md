@@ -4,7 +4,11 @@
 
 What make the difference?
 
-This script its not only a typical telegram downloader, it could monitor 2 channels and each channel execute a tinyMediaManager command, so let your kodi media gallery ready for offline use. Also, it let the option to create a folder for grouped_id (nested message) so it will be suitable for tv shows. When the downloads are ready, join and extract 7z/zip/rar multipart files.
+- Use Telethon to monitor 2 channels (Movies and Series) each 1 min
+- If you download 7z , zip or rar in a joined message, it extract for you
+- for let your gallery ready to use in Kodi or other mc, it execute tiny Media Manager (TMM), You have to configure TMM in gui first, adding the paths and your setup. 
+
+
 
 How to configure?
 
@@ -49,5 +53,9 @@ fill this configuration variables in top of the example  .env file. rename to .e
 - MESSAGE_NO_FILES_FOUND = "No se encontraron archivos en el grupo."
 
 
+#TODO
 
+- robingood_streaming needs some improvement with guessit and some strange file names.
+- Replace TMM in robingood.py with guessit.
+- Windows .exe precompiled, too much round for deploy all the dependencies in python. 
 
