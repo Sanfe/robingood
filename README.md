@@ -8,35 +8,39 @@ This script its not only a typical telegram downloader, it could monitor 2 chann
 
 How to configure?
 
-fill this configuration variables in top of the robingood.py
+fill this configuration variables in top of the example  .env file. rename to .env
 
-# Configuration
-API_ID = ''
-API_HASH = ''
-PHONE_NUMBER = ''
-SESSION_FILE = 'mi_sesion'
+# Variables comunes a ambos scripts
+API_ID=''  # Reemplaza con tu API ID de Telegram
+API_HASH=''  # Reemplaza con tu API Hash de Telegram
+PHONE_NUMBER=''  # Reemplaza con tu número de teléfono
+DOWNLOAD_SESSION_FILE='download'  # Nombre del archivo de sesión de Telegram
+STREAMING_SESSION_FILE='streaming'
+WAIT_TIME=60  # Tiempo de espera en segundos
 
-#IDs channels
+# Variables específicas para robingood.py
+- MOVIES_DOWNLOAD_CHANNEL_ID=''
+- SERIES_DOWNLOAD_CHANNEL_ID='-'
+- CONTROL_DOWNLOAD_CHANNEL_ID=''
+- MOVIES_DOWNLOAD_TEMP_FOLDER=''
+- SERIES_DOWNLOAD_TEMP_FOLDER=''
+- MOVIES_DOWNLOAD_FOLDER=''
+- SERIES_DOWNLOAD_FOLDER=''
+ 
+- USE_TMM=True  # Usar TinyMediaManager (True/False)
+- STATE_FILE=download_state.json  # Archivo para guardar el estado de las descargas
 
-CHANNEL_ID_1 = -1000000000 # Canal 1 (Movies)
-CHANNEL_ID_2 = -100000000 # Canal 2 (Series)
-CONTROL_CHANNEL_ID = -10000000 # Canal de control
+# Variables específicas para robingood_streaming.py
+- PROXY_PORT=8080  # Puerto para el servidor de streaming
+- MOVIES_CHANNEL_ID= # ID del canal de películas
+- SERIES_CHANNEL_ID= # ID del canal de series
+- MOVIES_FOLDER=  # Carpeta para películas
+- SERIES_FOLDER=  # Carpeta para series
+- DB_PATH=streaming_index.db  # Ruta de la base de datos para archivos procesados
+- VALIDATE_DUPLICATES=true
 
-#Dirs
+# configurable language messages inside robingood.py
 
-SAVE_DIR_1 = '/home/user/Downloads/Bot/Movies/.temp/'
-
-SAVE_DIR_2 = '/home/user/Downloads/Bot/Series/.temp/'
-
-EXTRACT_DIR_1 = '/home/user/Downloads/Bot/Movies/'
-
-EXTRACT_DIR_2 = '/home/user/Downloads/Bot/Series/'
-
-#wait time loop
-
-WAIT_TIME = 15  # 15 segundos
-
-# configurable messages
 - MESSAGE_PROMPT_FOLDER = "Se detectó un grupo con ID `{grouped_id}`. ¿Quieres guardar los archivos en una carpeta nueva? Responde con `Y` o `N`."
 - MESSAGE_ENTER_FOLDER_NAME = "Por favor, introduce el nombre de la carpeta:"
 - MESSAGE_TIMEOUT_FOLDER = "No se recibió respuesta. Procediendo con la descarga y extracción."
@@ -46,15 +50,4 @@ WAIT_TIME = 15  # 15 segundos
 
 
 
-# tinyMediaManager (alias TMM)
 
-Start first in GUI mode, configure paths and options. Then the script calls when the downloads task are ended.
-
-
-3 Channels: Control,Chnanel1(movies), Channel2(TvShows)
-
-# Control channel commands
-
-- /start Start when ready to listen
-- /stop kills the process. The systemd service must restart the process
-- /TMM execute TMM in the 2 channels manually.
