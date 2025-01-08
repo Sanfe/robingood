@@ -8,6 +8,7 @@ What make the difference?
 - If you download 7z , zip or rar multipart in a joined message, it extract for you
 - for let your gallery ready to use in Kodi or other media center, it execute tiny Media Manager (TMM), You have to configure TMM in GUI first, adding the paths and your setup.
 - If you send a joined message, it questions you about a name folder, useful for TV shows, TMM needs a folder manually to make their work with TV Shows.
+- Control channel for 3 commands. /start to start the monitoring, /stop to kill the process, /TMM to force TMM task now.
 
 # Robingood_streaming - Telegram streamer from your own channel.
 
