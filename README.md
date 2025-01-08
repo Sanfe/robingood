@@ -53,7 +53,7 @@ fill this configuration variables in top of the example  .env file. rename to .e
 - MESSAGE_NO_FILES_FOUND = "No se encontraron archivos en el grupo."
 
 
-#TODO
+# TODO
 
 - robingood_streaming needs some improvement with guessit and some strange file names.
 - Replace TMM in robingood.py with guessit.
