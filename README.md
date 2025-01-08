@@ -1,5 +1,5 @@
 
-# Robingood
+# Robingood - Telegram downloader with vitamins.
 
 
 What make the difference?
@@ -9,7 +9,7 @@ What make the difference?
 - for let your gallery ready to use in Kodi or other media center, it execute tiny Media Manager (TMM), You have to configure TMM in gui first, adding the paths and your setup.
 - If you send a joined message, it questions you about a name folder, useful for TV shows, TMM needs a folder manually to make their work with TV Shows.
 
-# Robingood_streaming
+# Robingood_streaming - Telegram streamer from your own channel.
 
 - Suitable for files max 4 gb allowed by telegram, it allows to streaming video message or video files in one part (no seeking avaliable yet, only play)
 - It creates a web internal proxy in localhost, linked with a sqlite database that monitor the path of files.
