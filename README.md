@@ -20,9 +20,10 @@ What make the difference?
 How to configure?
 
 - Go to https://my.telegram.org/auth for discover your API_ID and API_HASH
-- for channel id, you could use https://t.me/getInfoByIdBot ot come to telegram web and take the -10000000 and the end in the URL.
+- For channel id, you could use https://t.me/getInfoByIdBot ot come to telegram web and take the -10000000 and the end in the URL.
 - Fill this configuration variables in top of the example  .env file. rename to .env
 - pip install -r requirements.txt
+- When it configured, you could add as service in Linux. It works in Steam Deck too.
 
 # Common vars
 - API_ID=''  # Replace with your API ID de Telegram
