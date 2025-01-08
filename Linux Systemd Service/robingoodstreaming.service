@@ -1,0 +1,12 @@
+[Unit]
+Description=Robingood Streaming
+
+[Service]
+Type=idle
+ExecStartPre=/bin/sleep 20
+ExecStart=/home/deck/.config/systemd/user/robingoodstreaming.sh
+
+[Install]
+WantedBy=default.target
+
+
