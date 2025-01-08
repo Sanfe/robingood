@@ -11,12 +11,12 @@ How to configure?
 fill this configuration variables in top of the example  .env file. rename to .env
 
 # Variables comunes a ambos scripts
-API_ID=''  # Reemplaza con tu API ID de Telegram
-API_HASH=''  # Reemplaza con tu API Hash de Telegram
-PHONE_NUMBER=''  # Reemplaza con tu número de teléfono
-DOWNLOAD_SESSION_FILE='download'  # Nombre del archivo de sesión de Telegram
-STREAMING_SESSION_FILE='streaming'
-WAIT_TIME=60  # Tiempo de espera en segundos
+- API_ID=''  # Reemplaza con tu API ID de Telegram
+- API_HASH=''  # Reemplaza con tu API Hash de Telegram
+- PHONE_NUMBER=''  # Reemplaza con tu número de teléfono
+- DOWNLOAD_SESSION_FILE='download'  # Nombre del archivo de sesión de Telegram
+- STREAMING_SESSION_FILE='streaming'
+- WAIT_TIME=60  # Tiempo de espera en segundos
 
 # Variables específicas para robingood.py
 - MOVIES_DOWNLOAD_CHANNEL_ID=''
