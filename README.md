@@ -14,6 +14,7 @@ What make the difference?
 - Suitable for files max 4 gb allowed by telegram, it allows to streaming video message or video files in one part (no seeking avaliable yet, only play)
 - It creates a web internal proxy in localhost, linked with a sqlite database that monitor the path of files.
 - If you delete the file in the chat, it would be delete in the system.
+- It creates folders and .STRM files that could be opened with VLC (no web browsers)
 
 
 How to configure?
@@ -22,15 +23,15 @@ How to configure?
 - Fill this configuration variables in top of the example  .env file. rename to .env
 - pip install -r requirements.txt
 
-# Variables comunes a ambos scripts
-- API_ID=''  # Reemplaza con tu API ID de Telegram
-- API_HASH=''  # Reemplaza con tu API Hash de Telegram
-- PHONE_NUMBER=''  # Reemplaza con tu número de teléfono
-- DOWNLOAD_SESSION_FILE='download'  # Nombre del archivo de sesión de Telegram
+# Common vars
+- API_ID=''  # Replace with your API ID de Telegram
+- API_HASH=''  # Replace with your API Hash de Telegram
+- PHONE_NUMBER=''  #  
+- DOWNLOAD_SESSION_FILE='download'
 - STREAMING_SESSION_FILE='streaming'
-- WAIT_TIME=60  # Tiempo de espera en segundos
+- WAIT_TIME=60  # in seconds
 
-# Variables específicas para robingood.py
+# vars for robingood.py
 - MOVIES_DOWNLOAD_CHANNEL_ID=''
 - SERIES_DOWNLOAD_CHANNEL_ID='-'
 - CONTROL_DOWNLOAD_CHANNEL_ID=''
@@ -39,16 +40,16 @@ How to configure?
 - MOVIES_DOWNLOAD_FOLDER=''
 - SERIES_DOWNLOAD_FOLDER=''
  
-- USE_TMM=True  # Usar TinyMediaManager (True/False)
-- STATE_FILE=download_state.json  # Archivo para guardar el estado de las descargas
+- USE_TMM=True  # Use TinyMediaManager (True/False)
+- STATE_FILE=download_state.json
 
-# Variables específicas para robingood_streaming.py
-- PROXY_PORT=8080  # Puerto para el servidor de streaming
-- MOVIES_CHANNEL_ID= # ID del canal de películas
-- SERIES_CHANNEL_ID= # ID del canal de series
-- MOVIES_FOLDER=  # Carpeta para películas
-- SERIES_FOLDER=  # Carpeta para series
-- DB_PATH=streaming_index.db  # Ruta de la base de datos para archivos procesados
+#  vars for robingood_streaming.py
+- PROXY_PORT=8080  # streaming server port
+- MOVIES_CHANNEL_ID= 
+- SERIES_CHANNEL_ID=
+- MOVIES_FOLDER=  
+- SERIES_FOLDER= 
+- DB_PATH=streaming_index.db  # path of database of processed files
 - VALIDATE_DUPLICATES=true
 
 # configurable language messages inside robingood.py
