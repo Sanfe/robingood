@@ -6,7 +6,7 @@ What make the difference?
 
 - Use Telethon to monitor 2 channels (Movies and Series) each 1 min
 - If you download 7z , zip or rar in a joined message, it extract for you
-- for let your gallery ready to use in Kodi or other mc, it execute tiny Media Manager (TMM), You have to configure TMM in gui first, adding the paths and your setup. 
+- for let your gallery ready to use in Kodi or other media center, it execute tiny Media Manager (TMM), You have to configure TMM in gui first, adding the paths and your setup. 
 
 
 
