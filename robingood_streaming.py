@@ -1,15 +1,12 @@
-#!/usr/bin/env python3
 import os
 import asyncio
-from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError, MessageIdInvalidError
+from telethon import TelegramClient, events
+from telethon.errors import SessionPasswordNeededError, MessageIdInvalidError, ChatWriteForbiddenError
 from aiohttp import web
 import sqlite3
 import logging
 from pathlib import Path
 from guessit import guessit
-from dotenv import load_dotenv
-
 from dotenv import load_dotenv
 
 # Obtiene la ruta actual (donde está el .exe o donde se ejecuta el script)
@@ -20,8 +17,6 @@ dotenv_path = os.path.join(current_dir, ".env")
 load_dotenv(dotenv_path)
 
 # Cargar variables de entorno
-load_dotenv()
-
 API_ID = os.getenv('API_ID')
 API_HASH = os.getenv('API_HASH')
 PHONE_NUMBER = os.getenv('PHONE_NUMBER')
@@ -50,7 +45,7 @@ DB_PATH = os.getenv('DB_PATH', 'processed_files.db')
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 cursor.execute('''CREATE TABLE IF NOT EXISTS files
-                  (file_id TEXT PRIMARY KEY, channel TEXT, file_path TEXT)''')
+                  (file_id TEXT PRIMARY KEY, channel TEXT, file_path TEXT, status TEXT)''')
 
 async def authenticate():
     await client.connect()
@@ -90,12 +85,61 @@ async def handle_proxy_request(request):
         logger.error(f"Error al procesar {channel}/{file_id}: {str(e)}")
         return web.Response(status=500, text="Error interno del servidor.")
 
+def parse_episode_info(filename_or_caption):
+    """
+    Parses episode information using guessit from filename or caption.
+    """
+    guess = guessit(filename_or_caption)
+    if 'title' in guess and 'season' in guess and 'episode' in guess:
+        return guess['title'], guess['season'], guess['episode']
+    return None
+
+def capitalize_title(title):
+    """
+    Capitalizes the first letter of each word in the title.
+    """
+    return ' '.join(word.capitalize() for word in title.split())
+
+async def wait_for_response(client, chat_id, timeout=60):
+    loop = asyncio.get_event_loop()
+    future_response = loop.create_future()
+
+    async def response_handler(event):
+        if event.chat_id == chat_id and not future_response.done():
+            future_response.set_result(event)
+
+    client.add_event_handler(response_handler, events.NewMessage(chats=chat_id))
+
+    try:
+        return await asyncio.wait_for(future_response, timeout=timeout)
+    except asyncio.TimeoutError:
+        return None
+    finally:
+        client.remove_event_handler(response_handler)
+
+async def ask_for_episode_info(channel, file_id, filename_or_caption):
+    try:
+        await client.send_message(channel, f"No se pudo determinar la información del episodio para el archivo `{filename_or_caption}`. Por favor, proporciona el nombre de la serie, la temporada y el episodio en el formato: `NombreSerie S01E01`.")
+    except ChatWriteForbiddenError:
+        logger.error("No se puede escribir en este chat. Verifica los permisos del bot.")
+        return
+
+    response = await wait_for_response(client, channel, timeout=60)
+    if response:
+        episode_info = parse_episode_info(response.message.message)
+        if episode_info:
+            return episode_info
+        else:
+            await client.send_message(channel, "No se pudo parsear la información proporcionada. Por favor, inténtalo de nuevo.")
+    else:
+        logger.warning("No se recibió respuesta del usuario.")
+    return None
+
 async def process_channel(channel_name, channel_info):
     channel = await client.get_entity(channel_info['id'])
     folder_path = Path(channel_info['folder'])
     folder_path.mkdir(parents=True, exist_ok=True)
 
-    # Verificar archivos en la base de datos
     cursor.execute("SELECT file_id, file_path FROM files WHERE channel=?", (channel_name,))
     processed_files = cursor.fetchall()
 
@@ -109,7 +153,6 @@ async def process_channel(channel_name, channel_info):
                 os.remove(file_path)
                 logger.info(f"Archivo {file_path} eliminado por no existir en el canal.")
 
-    # Procesar mensajes nuevos
     async for message in client.iter_messages(channel):
         if message.file and message.file.mime_type.startswith('video/'):
             file_id = str(message.id)
@@ -119,29 +162,29 @@ async def process_channel(channel_name, channel_info):
                 logger.info(f"Archivo {file_id} del canal {channel_name} ya procesado. Saltando.")
                 continue
 
-            guessed_metadata = guessit(message.file.name or f"video_{file_id}.mp4")
-            logger.info(f"Metadatos extraídos con guessit: {guessed_metadata}")
+            filename = message.file.name or f"video_{file_id}.mp4"
+            caption = message.message if message.message else filename
 
-            title = guessed_metadata.get('title', 'Unknown')
-            season = guessed_metadata.get('season', 1)
-            episode = guessed_metadata.get('episode', None)
-            year = guessed_metadata.get('year', '')
+            episode_info = parse_episode_info(caption)
 
-            if season is not None and episode is not None:
-                proper_folder = folder_path / title / f"Season {season}"
-                proper_folder.mkdir(parents=True, exist_ok=True)
-                clean_file_name = f"{title} - S{season:02}E{episode:02}.mp4"
-            else:
-                proper_folder = folder_path / f"{title} ({year})"
-                proper_folder.mkdir(parents=True, exist_ok=True)
-                clean_file_name = f"{title} ({year}).mp4"
+            if not episode_info:
+                episode_info = await ask_for_episode_info(channel_name, file_id, caption)
+                if not episode_info:
+                    continue
+
+            title, season, episode = episode_info
+            title = capitalize_title(title)  # Capitalizar el título correctamente
+
+            proper_folder = folder_path / title / f"Season {season}"
+            proper_folder.mkdir(parents=True, exist_ok=True)
+            clean_file_name = f"{title} - S{season:02}E{episode:02}.mp4"
 
             strm_path = proper_folder / f"{clean_file_name}.strm"
-
             with strm_path.open('w') as strm_file:
                 strm_file.write(f"http://localhost:{PROXY_PORT}/{channel_name}/{file_id}")
 
-            cursor.execute("INSERT INTO files (file_id, channel, file_path) VALUES (?, ?, ?)", (file_id, channel_name, str(strm_path)))
+            cursor.execute("INSERT INTO files (file_id, channel, file_path, status) VALUES (?, ?, ?, 'processed')", 
+                           (file_id, channel_name, str(strm_path)))
             conn.commit()
 
             logger.info(f"Archivo STRM creado: {strm_path}")
