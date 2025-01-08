@@ -14,7 +14,7 @@ What make the difference?
 - Suitable for files max 4 gb allowed by telegram, it allows to streaming video message or video files in one part (no seeking avaliable yet, only play)
 - It creates a web internal proxy in localhost, linked with a sqlite database that monitor the path of files.
 - If you delete the file in the chat, it would be delete in the system.
-- It creates folders and .STRM files that could be opened with VLC (no web browsers)
+- It creates folders and .STRM files that could be opened with VLC, kodi, JellyFin, etc (no web browsers)
 
 
 How to configure?
