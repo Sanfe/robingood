@@ -13,7 +13,7 @@ What make the difference?
 
 # Robingood_streaming - Telegram streamer from your own channel.
 
-- Suitable for files max 4 gb allowed by telegram, it allows to streaming video message or video files in one part.
+- Suitable files max 4 gb allowed by telegram, it allows to streaming video message or video files in one part.
 - It creates a web internal proxy in localhost, linked with a sqlite database that monitor the path of files.
 - It creates folders,.STRM files that could be opened with VLC (no web browsers), and .nfo files for helping manage media centers like kodi, JellyFin, etc.
 - If you delete the file in the chat, it delete in the system ,alongside with the sub folders, STRM and .nfo.
