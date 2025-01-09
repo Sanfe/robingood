@@ -72,4 +72,4 @@ How to configure?
 - ~~robingood_streaming needs some improvement with guessit and some strange file names.~~ robingood_streaming it's ready for use. 
 - Replace TMM in robingood.py with guessit.
 - Windows .exe precompiled, too much round for deploy all the dependencies in python. 
-- Make a kodi addon for robingood_streaming
+- Make a kodi addon for robingood_streaming (maybe, some day)
