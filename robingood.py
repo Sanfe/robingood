@@ -1,141 +1,158 @@
-#!/usr/bin/env python3
 import os
+import re
 import asyncio
-import shutil
-import zipfile
-import py7zr
-import rarfile
-import subprocess
-import signal  # Importar el módulo signal
-import json
-from telethon import TelegramClient, events, types
-from telethon.errors import SessionPasswordNeededError, RPCError
-
+from telethon import TelegramClient, events
+from telethon.errors import SessionPasswordNeededError, MessageIdInvalidError, ChatWriteForbiddenError, FloodWaitError
+from aiohttp import web
+import sqlite3
+import logging
+from pathlib import Path
+from guessit import guessit
 from dotenv import load_dotenv
-import os
 
-# Cargar el archivo .env
-load_dotenv()
+# Obtiene la ruta actual (donde está el .exe o donde se ejecuta el script)
+current_dir = os.getcwd()
 
-# Configuración
-API_ID = int(os.getenv('API_ID', 0))
-API_HASH = os.getenv('API_HASH', '')
+# Carga el archivo .env desde la misma carpeta
+dotenv_path = os.path.join(current_dir, ".env")
+load_dotenv(dotenv_path)
+
+# Cargar variables de entorno
+API_ID = os.getenv('API_ID')
+API_HASH = os.getenv('API_HASH')
 PHONE_NUMBER = os.getenv('PHONE_NUMBER')
-SESSION_FILE = os.getenv('DOWNLOAD_SESSION_FILE', 'robingood')
+PROXY_PORT = int(os.getenv('PROXY_PORT', 8080))
+CHANNELS = {
+    'Movies': {
+        'id': int(os.getenv('MOVIES_CHANNEL_ID')),
+        'folder': os.getenv('MOVIES_FOLDER')
+    },
+    'Series': {
+        'id': int(os.getenv('SERIES_CHANNEL_ID')),
+        'folder': os.getenv('SERIES_FOLDER')
+    }
+}
 
-# IDs de los canales
-CHANNEL_ID_1 = int(os.getenv('MOVIES_DOWNLOAD_CHANNEL_ID', -1))  # Canal de películas
-CHANNEL_ID_2 = int(os.getenv('SERIES_DOWNLOAD_CHANNEL_ID', -1))  # Canal de series
-CONTROL_CHANNEL_ID = int(os.getenv('CONTROL_DOWNLOAD_CHANNEL_ID', -1))  # Canal de control
+# Configuración de logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Directorios para guardar y extraer archivos
-SAVE_DIR_1 = os.getenv('MOVIES_DOWNLOAD_TEMP_FOLDER')
-SAVE_DIR_2  = os.getenv('SERIES_DOWNLOAD_TEMP_FOLDER')
-EXTRACT_DIR_1  = os.getenv('MOVIES_DOWNLOAD_FOLDER')
-EXTRACT_DIR_2  = os.getenv('SERIES_DOWNLOAD_FOLDER')
+# Conexión al cliente de Telegram
+client = TelegramClient('streaming', API_ID, API_HASH)
 
-# Tiempo de espera entre cada ciclo de revisión (en segundos)
-WAIT_TIME = int(os.getenv('WAIT_TIME'))
+# Conexión a la base de datos
+DB_PATH = os.getenv('DB_PATH', 'processed_files.db')
+conn = sqlite3.connect(DB_PATH)
+cursor = conn.cursor()
+cursor.execute('''CREATE TABLE IF NOT EXISTS files
+                  (file_id TEXT PRIMARY KEY, channel TEXT, file_path TEXT, status TEXT)''')
 
-# Configuración de TinyMediaManager
-USE_TMM = os.getenv('USE_TMM', 'True').lower() == 'true'  # Convertir a booleano
-TMM_CHANNEL_ID_1_COMMAND = "/home/deck/Applications/tinyMediaManager/./tinyMediaManager movie -u -n -r"
-TMM_CHANNEL_ID_2_COMMAND = "/home/deck/Applications/tinyMediaManager/./tinyMediaManager tvshow -u -n -r"
+async def authenticate():
+    while True:
+        try:
+            await client.connect()
+            if not await client.is_user_authorized():
+                await client.send_code_request(PHONE_NUMBER)
+                code = input("Introduce el código de Telegram: ")
+                try:
+                    await client.sign_in(PHONE_NUMBER, code)
+                except SessionPasswordNeededError:
+                    password = input("Introduce tu contraseña de verificación en dos pasos: ")
+                    await client.sign_in(password=password)
+            logger.info("Autenticación exitosa.")
+            break
+        except (ConnectionError, OSError):
+            logger.warning("Error de conexión. Reintentando en 5 segundos...")
+            await asyncio.sleep(5)
 
-# Archivo de estado
-STATE_FILE = os.getenv('STATE_FILE', 'download_state.json')
+async def handle_proxy_request(request):
+    channel = request.match_info['channel']
+    file_id = request.match_info['file_id']
 
-# Mensajes configurables
-MESSAGE_PROMPT_FOLDER = "Se detectó un grupo con ID `{grouped_id}`. ¿Quieres guardar los archivos en una carpeta nueva? Responde con `Y` o `N`."
-MESSAGE_ENTER_FOLDER_NAME = "Por favor, introduce el nombre de la carpeta:"
-MESSAGE_TIMEOUT_FOLDER = "No se recibió respuesta. Procediendo con la descarga y extracción."
-MESSAGE_FOLDER_CREATED = "Carpeta `{folder_name}` creada exitosamente."
-MESSAGE_PROCESS_COMPLETE = "Archivos del grupo `{grouped_id}` procesados y guardados en `{folder_path}`."
-MESSAGE_NO_FILES_FOUND = "No se encontraron archivos en el grupo."
-MESSAGE_WAITING_FOR_DIRECTORIES = "la microSD no está montada"
-
-# Variables globales
-is_running = False
-download_state = {}
-
-# Funciones para guardar y cargar el estado de las descargas
-def save_state():
-    global STATE_FILE, download_state
     try:
-        with open(STATE_FILE, 'w') as f:
-            json.dump(download_state, f)
-        print(f"Estado guardado en {STATE_FILE}")
-    except Exception as e:
-        print(f"Error al guardar el estado: {e}")
+        message = await client.get_messages(CHANNELS[channel]['id'], ids=int(file_id))
+        if not message or not message.file:
+            return web.Response(status=404, text="Archivo no encontrado en el canal.")
 
-def load_state():
-    global STATE_FILE, download_state
-    try:
-        if os.path.exists(STATE_FILE):
-            with open(STATE_FILE, 'r') as f:
-                download_state = json.load(f)
-            print(f"Estado cargado desde {STATE_FILE}")
+        # Obtener el tamaño del archivo
+        file_size = message.file.size
+
+        # Determinar el rango solicitado
+        range_header = request.headers.get('Range', None)
+        if range_header:
+            range_match = re.match(r'bytes=(\d+)-(\d+)?', range_header)
+            if range_match:
+                start = int(range_match.group(1))
+                end = int(range_match.group(2)) if range_match.group(2) else file_size - 1
+            else:
+                return web.Response(status=400, text="Invalid Range header")
         else:
-            download_state = {}
-            print(f"Archivo de estado {STATE_FILE} no encontrado, iniciando nuevo estado.")
+            start = 0
+            end = file_size - 1
+
+        # Asegurarse de que los límites estén dentro del tamaño del archivo
+        start = max(0, min(start, file_size - 1))
+        end = max(0, min(end, file_size - 1))
+
+        # Configurar la respuesta con el rango adecuado
+        response = web.StreamResponse(
+            status=206 if range_header else 200,
+            headers={
+                'Content-Type': message.file.mime_type or 'application/octet-stream',
+                'Content-Range': f'bytes {start}-{end}/{file_size}',
+                'Content-Length': str(end - start + 1),
+                'Accept-Ranges': 'bytes',
+            }
+        )
+        await response.prepare(request)
+
+        # Descargar el archivo en partes y enviarlas
+        byte_count = 0
+        async for chunk in client.iter_download(message.media, offset=start):
+            chunk_length = len(chunk)
+            if byte_count + chunk_length > end - start + 1:
+                chunk = chunk[:end - start + 1 - byte_count]
+            await response.write(chunk)
+            byte_count += chunk_length
+            if byte_count >= end - start + 1:
+                break
+
+        await response.write_eof()
+        logger.info(f"Archivo {file_id} del canal {channel} transmitido correctamente.")
+        return response
+
+    except MessageIdInvalidError:
+        return web.Response(status=404, text="Archivo no encontrado en el canal.")
     except Exception as e:
-        print(f"Error al cargar el estado: {e}")
-        download_state = {}
+        logger.error(f"Error al procesar {channel}/{file_id}: {str(e)}")
+        return web.Response(status=500, text="Error interno del servidor.")
 
-def get_file_name(message):
-    if message.document is None:
-        return None
-    for attr in message.document.attributes:
-        if isinstance(attr, types.DocumentAttributeFilename):
-            return attr.file_name
-    return f"unknown_file_{message.id}"
+def parse_episode_info(filename_or_caption):
+    """
+    Parses episode information using guessit from filename or caption.
+    """
+    guess = guessit(filename_or_caption)
+    if 'title' in guess and 'season' in guess and 'episode' in guess:
+        return guess['title'], guess['season'], guess['episode']
+    return None
 
-def join_multipart_files(base_file_path):
-    dir_path = os.path.dirname(base_file_path)
-    file_name = os.path.basename(base_file_path)
-    file_name_without_ext = os.path.splitext(file_name)[0]
+def capitalize_title(title):
+    """
+    Capitalizes the first letter of each word in the title.
+    """
+    return ' '.join(word.capitalize() for word in title.split())
 
-    if file_name.endswith(('.7z.001', '.zip.001')):
-        parts = sorted([f for f in os.listdir(dir_path) if f.startswith(file_name_without_ext)])
-        output_file = os.path.join(dir_path, file_name_without_ext)
+def create_tvshow_nfo(tvshow_folder, title):
+    """
+    Creates a tvshow.nfo file in the specified folder with the given title.
+    """
+    nfo_path = tvshow_folder / 'tvshow.nfo'
+    if not nfo_path.exists():
+        with nfo_path.open('w') as nfo_file:
+            nfo_file.write(f"<tvshow>\n  <title>{title}</title>\n</tvshow>\n")
+        logger.info(f"Archivo tvshow.nfo creado: {nfo_path}")
 
-        with open(output_file, 'wb') as outfile:
-            for part in parts:
-                with open(os.path.join(dir_path, part), 'rb') as infile:
-                    shutil.copyfileobj(infile, outfile)
-
-        print(f"Partes unidas en: {output_file}")
-        return output_file
-    else:
-        return base_file_path
-
-async def extract_file(file_path, extract_dir):
-    file_extension = os.path.splitext(file_path)[1].lower()
-
-    try:
-        if file_extension == '.zip':
-            with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
-        elif file_extension == '.7z':
-            with py7zr.SevenZipFile(file_path, mode='r') as z:
-                z.extractall(extract_dir)
-        elif file_extension == '.rar':
-            with rarfile.RarFile(file_path) as rar_ref:
-                rar_ref.extractall(extract_dir)
-        else:
-            raise ValueError(f"Formato de archivo no soportado para extracción: {file_extension}")
-
-        print(f"Archivo extraído: {file_path}")
-        os.remove(file_path)
-        return True
-    except Exception as e:
-        print(f"Error al extraer {file_path}: {str(e)}")
-        dest_path = os.path.join(extract_dir, os.path.basename(file_path))
-        shutil.move(file_path, dest_path)
-        print(f"Archivo movido debido a error: {dest_path}")
-        return False
-
-async def wait_for_response(client, chat_id, timeout=30):
+async def wait_for_response(client, chat_id, timeout=60):
     loop = asyncio.get_event_loop()
     future_response = loop.create_future()
 
@@ -152,259 +169,118 @@ async def wait_for_response(client, chat_id, timeout=30):
     finally:
         client.remove_event_handler(response_handler)
 
-async def process_grouped_files(client, message, save_dir, extract_dir):
-    global download_state
-    if message.grouped_id is None:
-        return await process_single_file(client, message, save_dir, extract_dir)
+async def ask_for_episode_info(channel, file_id, filename_or_caption):
+    try:
+        await client.send_message(channel, f"No se pudo determinar la información del episodio para el archivo `{filename_or_caption}`. Por favor, proporciona el nombre de la serie, la temporada y el episodio en el formato: `NombreSerie S01E01`.")
+    except ChatWriteForbiddenError:
+        logger.error("No se puede escribir en este chat. Verifica los permisos del bot.")
+        return
 
-    grouped_id = message.grouped_id
-    max_amp = 10
-    search_ids = list(range(message.id - max_amp, message.id + max_amp + 1))
-    messages = await client.get_messages(message.chat_id, ids=search_ids)
-    group_files = [msg for msg in messages if msg and msg.grouped_id == grouped_id and msg.document]
-
-    if not group_files:
-        await client.send_message(message.chat_id, MESSAGE_NO_FILES_FOUND)
-        return message.id, False
-
-    # Si ya se ha guardado el estado de este grupo, usarlo
-    if str(grouped_id) in download_state:
-        state = download_state[str(grouped_id)]
-        destination_folder = state['destination_folder']
-        downloaded_files = state['downloaded_files']
+    response = await wait_for_response(client, channel, timeout=60)
+    if response:
+        episode_info = parse_episode_info(response.message.message)
+        if episode_info:
+            return episode_info
+        else:
+            await client.send_message(channel, "No se pudo parsear la información proporcionada. Por favor, inténtalo de nuevo.")
     else:
-        # Crear una carpeta específica para el grupo sin preguntar de nuevo
-        destination_folder = extract_dir
-        downloaded_files = []
+        logger.warning("No se recibió respuesta del usuario.")
+    return None
 
-    file_paths = []
-    is_archive = False
-    archive_type = None
-    rar_main_file = None
+async def process_channel(channel_name, channel_info):
+    channel = await client.get_entity(channel_info['id'])
+    folder_path = Path(channel_info['folder'])
+    folder_path.mkdir(parents=True, exist_ok=True)
 
-    for part in group_files:
-        if not is_running:
-            print("Deteniendo descarga de archivos agrupados...")
-            return message.id, False
-        file_name = get_file_name(part)
-        if file_name is None or file_name in downloaded_files:
-            continue
-        file_path = os.path.join(save_dir, file_name)
-        file_paths.append(file_path)
-        print(f"Descargando parte: {file_name}")
-        await client.download_media(part, file_path)
+    async for message in client.iter_messages(channel):
+        if message.file and message.file.mime_type.startswith('video/'):
+            file_id = str(message.id)
 
-        # Actualizar estado de la descarga
-        downloaded_files.append(file_name)
-        download_state[str(grouped_id)] = {
-            'chat_id': message.chat_id,
-            'destination_folder': destination_folder,
-            'downloaded_files': downloaded_files
-        }
-        save_state()
+            cursor.execute("SELECT file_id FROM files WHERE file_id=? AND channel=?", (file_id, channel_name))
+            if cursor.fetchone():
+                logger.info(f"Archivo {file_id} del canal {channel_name} ya procesado. Saltando.")
+                continue
 
-        if file_name.endswith('.7z.001') or file_name.endswith('.zip.001'):
-            is_archive = True
-            archive_type = '7z' if file_name.endswith('.7z.001') else 'zip'
-        elif file_name.endswith('.part1.rar'):
-            is_archive = True
-            archive_type = 'rar'
-            rar_main_file = file_path
+            filename = message.file.name or f"video_{file_id}.mp4"
+            caption = message.message if message.message else filename
 
-    files_processed = False
-    if is_archive:
-        if archive_type in ['7z', 'zip']:
-            joined_file_path = join_multipart_files(file_paths[0])
-            files_processed = await extract_file(joined_file_path, destination_folder)
-        elif archive_type == 'rar':
-            files_processed = await extract_file(rar_main_file, destination_folder)
-        for file_path in file_paths:
+            episode_info = parse_episode_info(caption)
+
+            if not episode_info:
+                episode_info = await ask_for_episode_info(channel_name, file_id, caption)
+                if not episode_info:
+                    continue
+
+            title, season, episode = episode_info
+            title = capitalize_title(title)  # Capitalizar el título correctamente
+
+            proper_folder = folder_path / title / f"Season {season}"
+            proper_folder.mkdir(parents=True, exist_ok=True)
+            clean_file_name = f"{title} - S{season:02}E{episode:02}.mp4"
+
+            strm_path = proper_folder / f"{clean_file_name}.strm"
+            with strm_path.open('w') as strm_file:
+                strm_file.write(f"http://localhost:{PROXY_PORT}/{channel_name}/{file_id}")
+
+            cursor.execute("INSERT INTO files (file_id, channel, file_path, status) VALUES (?, ?, ?, 'processed')", 
+                           (file_id, channel_name, str(strm_path)))
+            conn.commit()
+
+            logger.info(f"Archivo STRM creado: {strm_path}")
+
+            # Crear el archivo tvshow.nfo si no existe
+            create_tvshow_nfo(folder_path / title, title)
+
+async def verify_files(channel_name, channel_info):
+    channel = await client.get_entity(channel_info['id'])
+
+    cursor.execute("SELECT file_id, file_path FROM files WHERE channel=?", (channel_name,))
+    processed_files = cursor.fetchall()
+
+    for file_id, file_path in processed_files:
+        try:
+            await client.get_messages(channel, ids=int(file_id))
+        except MessageIdInvalidError:
+            cursor.execute("DELETE FROM files WHERE file_id=? AND channel=?", (file_id, channel_name))
+            conn.commit()
             if os.path.exists(file_path):
                 os.remove(file_path)
+                logger.info(f"Archivo {file_path} eliminado por no existir en el canal.")
+
+async def handle_verify_request(request):
+    channel = request.match_info['channel']
+    if channel in CHANNELS:
+        await verify_files(channel, CHANNELS[channel])
+        return web.Response(status=200, text="Verificación completada.")
     else:
-        for file_path in file_paths:
-            dest_path = os.path.join(destination_folder, os.path.basename(file_path))
-            shutil.move(file_path, dest_path)
-            print(f"Archivo movido: {dest_path}")
-        files_processed = True
-
-    # Eliminar estado de descarga completada
-    if str(grouped_id) in download_state:
-        del download_state[str(grouped_id)]
-        save_state()
-
-    await client.send_message(
-        message.chat_id,
-        MESSAGE_PROCESS_COMPLETE.format(grouped_id=grouped_id, folder_path=destination_folder)
-    )
-
-    # Borrar todos los mensajes del grupo después de procesarlos
-    for part in group_files:
-        await delete_message(client, part)
-
-    return max(msg.id for msg in group_files), files_processed
-
-async def process_single_file(client, message, save_dir, extract_dir):
-    global download_state
-    if not is_running:
-        print("Deteniendo descarga de archivo único...")
-        return message.id, False
-    file_name = get_file_name(message)
-    if file_name is None:
-        return message.id, False
-    file_path = os.path.join(save_dir, file_name)
-    print(f"Descargando: {file_name}")
-    await client.download_media(message, file_path)
-    dest_path = os.path.join(extract_dir, file_name)
-    shutil.move(file_path, dest_path)
-    print(f"Archivo movido: {dest_path}")
-
-    # Guardar estado de la descarga
-    download_state[message.id] = {
-        'chat_id': message.chat_id,
-        'file_path': file_path,
-        'save_dir': save_dir,
-        'extract_dir': extract_dir
-    }
-    save_state()
-
-    # Eliminar estado de descarga completada
-    if message.id in download_state:
-        del download_state[message.id]
-        save_state()
-
-    await delete_message(client, message)
-    return message.id, True
-
-async def delete_message(client, message):
-    try:
-        await client.delete_messages(message.chat_id, [message.id])
-        print(f"Mensaje borrado del canal: {message.id}")
-    except Exception as e:
-        print(f"Error al borrar el mensaje {message.id}: {str(e)}")
-
-def execute_tmm(command):
-    try:
-        result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
-        print(f"Comando TMM ejecutado: {command}\nSalida:\n{result.stdout}\nError:\n{result.stderr}")
-    except subprocess.CalledProcessError as e:
-        print(f"Error al ejecutar el comando TMM: {e}\nSalida:\n{e.output}\nError:\n{e.stderr}")
-
-async def process_channel(client, channel_id, save_dir, extract_dir, last_message_id, tmm_command):
-    try:
-        channel = await client.get_entity(channel_id)
-        print(f"Procesando canal: {channel.title}")
-        files_processed = False
-        async for message in client.iter_messages(channel, min_id=last_message_id):
-            if not is_running:
-                print("Deteniendo procesamiento del canal...")
-                break
-            new_last_id, processed = await process_grouped_files(client, message, save_dir, extract_dir)
-            last_message_id = max(last_message_id, new_last_id)
-            files_processed |= processed
-        if files_processed and USE_TMM:
-            execute_tmm(tmm_command)
-        return last_message_id
-    except RPCError as e:
-        print(f"Error RPC al procesar el canal {channel_id}: {str(e)}")
-        return last_message_id
-    except Exception as e:
-        print(f"Error al procesar el canal {channel_id}: {str(e)}")
-        return last_message_id
-
-async def resume_downloads(client):
-    global download_state
-    for message_id, state in download_state.items():
-        if not is_running:
-            break
-        print(f"Resumiendo descarga: {state['file_path']}")
-        # Simular la descarga resumida
-        await asyncio.sleep(1)  # Simulación de tiempo de descarga
-        dest_path = os.path.join(state['extract_dir'], os.path.basename(state['file_path']))
-        shutil.move(state['file_path'], dest_path)
-        print(f"Archivo movido: {dest_path}")
-
-        # Eliminar estado de descarga completada
-        if message_id in download_state:
-            del download_state[message_id]
-            save_state()
-
-async def wait_for_directories(client, directories):
-    while True:
-        all_exist = all(os.path.exists(directory) for directory in directories)
-        if all_exist:
-            print("Todas las carpetas están disponibles.")
-            return
-        print("Esperando a que las carpetas estén disponibles...")
-        await client.send_message(CONTROL_CHANNEL_ID, MESSAGE_WAITING_FOR_DIRECTORIES)
-        await asyncio.sleep(5)
-
-async def main_loop(client):
-    global is_running
-    load_state()
-    last_message_id_1 = 0
-    last_message_id_2 = 0
-
-    # Verificar que las carpetas estén disponibles antes de continuar
-    await wait_for_directories(client, [SAVE_DIR_1, SAVE_DIR_2, EXTRACT_DIR_1, EXTRACT_DIR_2])
-
-    while is_running:
-        try:
-            print("Esperando mensajes...")
-            await resume_downloads(client)
-            last_message_id_1 = await process_channel(client, CHANNEL_ID_1, SAVE_DIR_1, EXTRACT_DIR_1, last_message_id_1, TMM_CHANNEL_ID_1_COMMAND)
-            last_message_id_2 = await process_channel(client, CHANNEL_ID_2, SAVE_DIR_2, EXTRACT_DIR_2, last_message_id_2, TMM_CHANNEL_ID_2_COMMAND)
-            print("Ciclo completado. Esperando...")
-            await asyncio.sleep(WAIT_TIME)
-        except Exception as e:
-            print(f"Error en el ciclo principal: {str(e)}")
-            await asyncio.sleep(WAIT_TIME)
-
-async def start_loop(client):
-    global is_running
-    is_running = True
-    await main_loop(client)
-
-def stop_loop():
-    global is_running
-    is_running = False
-    # Guardar estado de todas las descargas en curso
-    save_state()
-    print("Loop detenido.")
-    os.kill(os.getpid(), signal.SIGTERM)  # Matar el proceso
+        return web.Response(status=404, text="Canal no encontrado.")
 
 async def main():
-    client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
-    await client.start()
+    await authenticate()
 
-    if not await client.is_user_authorized():
-        await client.send_code_request(PHONE_NUMBER)
+    app = web.Application()
+    app.router.add_get('/{channel}/{file_id}', handle_proxy_request)
+    app.router.add_get('/verify/{channel}', handle_verify_request)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, 'localhost', PROXY_PORT)
+    await site.start()
+
+    logger.info("Servidor HTTP de streaming iniciado.")
+
+    while True:
         try:
-            await client.sign_in(PHONE_NUMBER, input('Enter the code: '))
-        except SessionPasswordNeededError:
-            await client.sign_in(password=input('Password: '))
+            # Procesar canales en paralelo
+            tasks = [process_channel(channel_name, channel_info) for channel_name, channel_info in CHANNELS.items()]
+            await asyncio.gather(*tasks)
 
-    @client.on(events.NewMessage(chats=CONTROL_CHANNEL_ID))
-    async def command_handler(event):
-        global is_running
-        if event.raw_text == "/start":
-            if not is_running:
-                await event.reply("Script iniciado.")
-                await start_loop(client)
-            else:
-                await event.reply("El script ya está en ejecución.")
-        elif event.raw_text == "/stop":
-            if is_running:
-                await event.reply("Script detenido.")
-                stop_loop()
-        elif event.raw_text == "/TMM":
-            await event.reply("Ejecutando TinyMediaManager...")
-            execute_tmm(TMM_CHANNEL_ID_1_COMMAND)
-            execute_tmm(TMM_CHANNEL_ID_2_COMMAND)
-            await event.reply("TinyMediaManager ejecutado.")
-
-    print("Bot de control iniciado. Esperando comandos...")
-    await client.run_until_disconnected()
+            # Esperar antes de verificar nuevamente
+            await asyncio.sleep(3600)
+        except (ConnectionError, OSError):
+            logger.warning("Perdida de conexión. Intentando reconectar en 5 segundos...")
+            await asyncio.sleep(5)
+            await authenticate()
 
 if __name__ == '__main__':
     asyncio.run(main())
