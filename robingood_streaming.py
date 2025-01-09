@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import asyncio
+import shutil
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError, MessageIdInvalidError
 from aiohttp import web
@@ -10,15 +11,6 @@ from pathlib import Path
 from guessit import guessit
 from dotenv import load_dotenv
 
-from dotenv import load_dotenv
-
-# Obtiene la ruta actual (donde está el .exe o donde se ejecuta el script)
-current_dir = os.getcwd()
-
-# Carga el archivo .env desde la misma carpeta
-dotenv_path = os.path.join(current_dir, ".env")
-load_dotenv(dotenv_path)
-
 # Cargar variables de entorno
 load_dotenv()
 
@@ -27,6 +19,7 @@ API_HASH = os.getenv('API_HASH')
 PHONE_NUMBER = os.getenv('PHONE_NUMBER')
 PROXY_PORT = int(os.getenv('PROXY_PORT', 8080))
 WAIT_TIME = int(os.getenv('WAIT_TIME', 120))
+BASE_URL = os.getenv('BASE_URL', f'http://localhost:{PROXY_PORT}')
 CHANNELS = {
     'Movies': {
         'id': int(os.getenv('MOVIES_CHANNEL_ID')),
@@ -75,10 +68,21 @@ async def handle_proxy_request(request):
         response = web.StreamResponse()
         response.content_type = message.file.mime_type or 'application/octet-stream'
         response.headers['Content-Disposition'] = f'inline; filename="{message.file.name or file_id}"'
-        await response.prepare(request)
 
-        async for chunk in client.iter_download(message.media):
-            await response.write(chunk)
+        range_header = request.headers.get('Range', None)
+        if range_header:
+            start_str, end_str = range_header.replace('bytes=', '').split('-')
+            start = int(start_str)
+            end = int(end_str) if end_str else None
+            response.set_status(206)
+            response.headers['Content-Range'] = f'bytes {start}-{end or message.file.size - 1}/{message.file.size}'
+            await response.prepare(request)
+            async for chunk in client.iter_download(message.media, offset=start, limit=end):
+                await response.write(chunk)
+        else:
+            await response.prepare(request)
+            async for chunk in client.iter_download(message.media):
+                await response.write(chunk)
 
         await response.write_eof()
         logger.info(f"Archivo {file_id} del canal {channel} transmitido correctamente.")
@@ -90,10 +94,49 @@ async def handle_proxy_request(request):
         logger.error(f"Error al procesar {channel}/{file_id}: {str(e)}")
         return web.Response(status=500, text="Error interno del servidor.")
 
+def parse_movie_info(filename_or_caption):
+    guess = guessit(filename_or_caption)
+    if 'title' in guess and 'year' in guess:
+        return guess['title'], guess['year']
+    return None, None
+
+def parse_episode_info(filename_or_caption):
+    guess = guessit(filename_or_caption)
+    if 'title' in guess and 'season' in guess and 'episode' in guess:
+        return guess['title'], guess['season'], guess['episode']
+    return None
+
+def capitalize_title(title):
+    return ' '.join(word.capitalize() for word in title.split())
+
+def create_movie_nfo(folder, title, premiered):
+    nfo_path = folder / "movie.nfo"
+    with nfo_path.open('w') as nfo_file:
+        nfo_file.write(f"<movie>\n  <title>{title}</title>\n  <premiered>{premiered}</premiered>\n</movie>")
+    logger.info(f"Archivo NFO creado: {nfo_path}")
+
+def delete_empty_folders(folder, root_folders):
+    folder_path = Path(folder)
+    while folder_path != folder_path.parent:
+        try:
+            # Verificar si la carpeta está vacía o solo contiene archivos .nfo, y no es una carpeta raíz
+            if folder_path not in root_folders and (not any(folder_path.iterdir()) or all(f.suffix == '.nfo' for f in folder_path.iterdir())):
+                for f in folder_path.iterdir():
+                    f.unlink()
+                folder_path.rmdir()
+                logger.info(f"Carpeta {folder_path} eliminada por estar vacía o solo contener archivos .nfo.")
+                folder_path = folder_path.parent
+            else:
+                break
+        except OSError:
+            break
+
 async def process_channel(channel_name, channel_info):
     channel = await client.get_entity(channel_info['id'])
     folder_path = Path(channel_info['folder'])
     folder_path.mkdir(parents=True, exist_ok=True)
+
+    root_folders = {Path(info['folder']) for info in CHANNELS.values()}
 
     # Verificar archivos en la base de datos
     cursor.execute("SELECT file_id, file_path FROM files WHERE channel=?", (channel_name,))
@@ -101,48 +144,69 @@ async def process_channel(channel_name, channel_info):
 
     for file_id, file_path in processed_files:
         try:
-            await client.get_messages(channel, ids=int(file_id))
+            message = await client.get_messages(channel, ids=int(file_id))
+            if not message:
+                logger.info(f"Mensaje {file_id} no encontrado en el canal {channel_name}. Eliminando archivos asociados.")
+                raise MessageIdInvalidError(request=None)
         except MessageIdInvalidError:
             cursor.execute("DELETE FROM files WHERE file_id=? AND channel=?", (file_id, channel_name))
             conn.commit()
             if os.path.exists(file_path):
                 os.remove(file_path)
                 logger.info(f"Archivo {file_path} eliminado por no existir en el canal.")
+                # Eliminar carpeta si está vacía
+                delete_empty_folders(Path(file_path).parent, root_folders)
 
     # Procesar mensajes nuevos
     async for message in client.iter_messages(channel):
         if message.file and message.file.mime_type.startswith('video/'):
             file_id = str(message.id)
 
+            # Verificar si el archivo ya existe en la base de datos
             cursor.execute("SELECT file_id FROM files WHERE file_id=? AND channel=?", (file_id, channel_name))
             if cursor.fetchone():
                 logger.info(f"Archivo {file_id} del canal {channel_name} ya procesado. Saltando.")
                 continue
 
-            guessed_metadata = guessit(message.file.name or f"video_{file_id}.mp4")
-            logger.info(f"Metadatos extraídos con guessit: {guessed_metadata}")
-
-            title = guessed_metadata.get('title', 'Unknown')
-            season = guessed_metadata.get('season', 1)
-            episode = guessed_metadata.get('episode', None)
-            year = guessed_metadata.get('year', '')
-
-            if season is not None and episode is not None:
+            filename = message.file.name or f"video_{file_id}.mp4"
+            if channel_name == 'Movies':
+                title, premiered = parse_movie_info(filename)
+                if not title or not premiered:
+                    # Intentar extraer información del caption del mensaje si el nombre del archivo no es válido
+                    if message.message:
+                        title, premiered = parse_movie_info(message.message)
+                    if not title or not premiered:
+                        logger.warning(f"No se pudo extraer información para la película: {filename}")
+                        continue
+                title = capitalize_title(title)
+                proper_folder = folder_path / f"{title} ({premiered})"
+                proper_folder.mkdir(parents=True, exist_ok=True)
+                clean_file_name = f"{title} ({premiered}){Path(filename).suffix}"
+                create_movie_nfo(proper_folder, title, premiered)
+            elif channel_name == 'Series':
+                episode_info = parse_episode_info(filename)
+                if not episode_info:
+                    # Intentar extraer información del caption del mensaje si el nombre del archivo no es válido
+                    if message.message:
+                        episode_info = parse_episode_info(message.message)
+                    if not episode_info:
+                        logger.warning(f"No se pudo extraer información para el episodio: {filename}")
+                        continue
+                title, season, episode = episode_info
+                title = capitalize_title(title)
                 proper_folder = folder_path / title / f"Season {season}"
                 proper_folder.mkdir(parents=True, exist_ok=True)
-                clean_file_name = f"{title} - S{season:02}E{episode:02}.mp4"
-            else:
-                proper_folder = folder_path / f"{title} ({year})"
-                proper_folder.mkdir(parents=True, exist_ok=True)
-                clean_file_name = f"{title} ({year}).mp4"
+                clean_file_name = f"{title} - S{season:02}E{episode:02}{Path(filename).suffix}"
 
             strm_path = proper_folder / f"{clean_file_name}.strm"
-
             with strm_path.open('w') as strm_file:
-                strm_file.write(f"http://localhost:{PROXY_PORT}/{channel_name}/{file_id}")
+                strm_file.write(f"{BASE_URL}/{channel_name}/{file_id}")
 
-            cursor.execute("INSERT INTO files (file_id, channel, file_path) VALUES (?, ?, ?)", (file_id, channel_name, str(strm_path)))
-            conn.commit()
+            try:
+                cursor.execute("INSERT INTO files (file_id, channel, file_path) VALUES (?, ?, ?)", (file_id, channel_name, str(strm_path)))
+                conn.commit()
+            except sqlite3.IntegrityError:
+                logger.warning(f"Archivo {file_id} del canal {channel_name} ya existe en la base de datos.")
 
             logger.info(f"Archivo STRM creado: {strm_path}")
 
