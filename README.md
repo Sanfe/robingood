@@ -15,7 +15,8 @@ What make the difference?
 
 - Suitable files max 4 gb allowed by telegram, it allows to streaming video message / video files in one part.
 - It creates a web internal proxy in localhost, linked with a sqlite database that monitor the path of files.
-- It creates folders,.STRM files that could be opened with VLC (no web browsers), and .nfo files for helping manage media centers like kodi, JellyFin, etc.
+- It creates folders and.STRM files that could be opened with VLC, kodi, JellyFin,etc (no web browsers)
+- It creates a .nfo files for helping kodi, JellyFin, etc to request metadata. 
 - If you delete the file in the chat, it delete in the system ,alongside with the sub folders, STRM and .nfo.
 
 
