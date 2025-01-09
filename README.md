@@ -13,10 +13,10 @@ What make the difference?
 
 # Robingood_streaming - Telegram streamer from your own channel.
 
-- Suitable for files max 4 gb allowed by telegram, it allows to streaming video message or video files in one part (no seeking avaliable yet, only play)
+- Suitable for files max 4 gb allowed by telegram, it allows to streaming video message or video files in one part.
 - It creates a web internal proxy in localhost, linked with a sqlite database that monitor the path of files.
-- If you delete the file in the chat, it would be delete in the system.
-- It creates folders and .STRM files that could be opened with VLC, kodi, JellyFin, etc (no web browsers)
+- It creates folders,.STRM files that could be opened with VLC (no web browsers), and .nfo files for helping manage media centers like kodi, JellyFin, etc.
+- If you delete the file in the chat, it delete in the system ,alongside with the sub folders, STRM and .nfo.
 
 
 How to configure?
@@ -68,7 +68,7 @@ How to configure?
 
 # TODO
 
-- robingood_streaming needs some improvement with guessit and some strange file names.
+- ~~robingood_streaming needs some improvement with guessit and some strange file names.~~ robingood_streaming it's ready for use. 
 - Replace TMM in robingood.py with guessit.
 - Windows .exe precompiled, too much round for deploy all the dependencies in python. 
 - Make a kodi addon for robingood_streaming
