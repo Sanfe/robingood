@@ -192,6 +192,7 @@ async def process_channel(channel_name, channel_info):
                 proper_folder.mkdir(parents=True, exist_ok=True)
                 clean_file_name = f"{title} ({premiered}){Path(filename).suffix}"
                 create_movie_nfo(proper_folder, title, premiered)
+                strm_path = proper_folder / f"{clean_file_name}.strm"
             elif channel_name == 'Series':
                 episode_info = parse_episode_info(filename)
                 if not episode_info:
@@ -211,8 +212,8 @@ async def process_channel(channel_name, channel_info):
                     create_tvshow_nfo(proper_folder, title)
                 season_folder = proper_folder / f"Season {season}"
                 season_folder.mkdir(parents=True, exist_ok=True)
+                strm_path = season_folder / f"{clean_file_name}.strm"
 
-            strm_path = season_folder / f"{clean_file_name}.strm"
             with strm_path.open('w') as strm_file:
                 strm_file.write(f"{BASE_URL}/{channel_name}/{file_id}")
 
