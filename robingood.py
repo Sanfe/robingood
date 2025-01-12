@@ -6,13 +6,12 @@ import zipfile
 import py7zr
 import rarfile
 import subprocess
-import signal  # Importar el módulo signal
+import signal
 import json
 from telethon import TelegramClient, events, types
 from telethon.errors import SessionPasswordNeededError, RPCError
 
 from dotenv import load_dotenv
-import os
 
 # Cargar el archivo .env
 load_dotenv()
@@ -30,15 +29,15 @@ CONTROL_CHANNEL_ID = int(os.getenv('CONTROL_DOWNLOAD_CHANNEL_ID', -1))  # Canal 
 
 # Directorios para guardar y extraer archivos
 SAVE_DIR_1 = os.getenv('MOVIES_DOWNLOAD_TEMP_FOLDER')
-SAVE_DIR_2  = os.getenv('SERIES_DOWNLOAD_TEMP_FOLDER')
-EXTRACT_DIR_1  = os.getenv('MOVIES_DOWNLOAD_FOLDER')
-EXTRACT_DIR_2  = os.getenv('SERIES_DOWNLOAD_FOLDER')
+SAVE_DIR_2 = os.getenv('SERIES_DOWNLOAD_TEMP_FOLDER')
+EXTRACT_DIR_1 = os.getenv('MOVIES_DOWNLOAD_FOLDER')
+EXTRACT_DIR_2 = os.getenv('SERIES_DOWNLOAD_FOLDER')
 
 # Tiempo de espera entre cada ciclo de revisión (en segundos)
 WAIT_TIME = int(os.getenv('WAIT_TIME'))
 
 # Configuración de TinyMediaManager
-USE_TMM = os.getenv('USE_TMM', 'True').lower() == 'true'  # Convertir a booleano
+USE_TMM = os.getenv('USE_TMM', 'True').lower() == 'true'
 TMM_CHANNEL_ID_1_COMMAND = "/home/deck/Applications/tinyMediaManager/./tinyMediaManager movie -u -n -r"
 TMM_CHANNEL_ID_2_COMMAND = "/home/deck/Applications/tinyMediaManager/./tinyMediaManager tvshow -u -n -r"
 
@@ -173,8 +172,25 @@ async def process_grouped_files(client, message, save_dir, extract_dir):
         destination_folder = state['destination_folder']
         downloaded_files = state['downloaded_files']
     else:
-        # Crear una carpeta específica para el grupo sin preguntar de nuevo
-        destination_folder = extract_dir
+        # Enviar mensaje interactivo para preguntar sobre la carpeta
+        await client.send_message(message.chat_id, MESSAGE_PROMPT_FOLDER.format(grouped_id=grouped_id))
+        
+        # Esperar respuesta del usuario
+        response_event = await wait_for_response(client, message.chat_id, timeout=30)
+        if response_event and response_event.raw_text.lower() == 'y':
+            await client.send_message(message.chat_id, MESSAGE_ENTER_FOLDER_NAME)
+            folder_name_event = await wait_for_response(client, message.chat_id, timeout=30)
+            if folder_name_event:
+                folder_name = folder_name_event.raw_text
+                destination_folder = os.path.join(extract_dir, folder_name)
+                os.makedirs(destination_folder, exist_ok=True)
+                await client.send_message(message.chat_id, MESSAGE_FOLDER_CREATED.format(folder_name=folder_name))
+            else:
+                await client.send_message(message.chat_id, MESSAGE_TIMEOUT_FOLDER)
+                destination_folder = extract_dir
+        else:
+            destination_folder = extract_dir
+
         downloaded_files = []
 
     file_paths = []
